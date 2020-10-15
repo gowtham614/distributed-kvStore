@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -61,7 +62,7 @@ func (m *Master) GetTask(reply *ExampleReply, args *TaskArgs) error {
 		}
 	}
 	// fmt.Printf("%v master GetTask = %+v\n", time.Now(), args)
-	return nil // need to think about this
+	return nil
 }
 
 func (m *Master) ReportTask(report *TaskReport, reply *ExampleReply) error {
@@ -73,7 +74,7 @@ func (m *Master) ReportTask(report *TaskReport, reply *ExampleReply) error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	m.taskList[idx].state = 2 // made idempotent???
+	m.taskList[idx].state = 2 // made idempotent
 	return nil
 }
 
@@ -130,6 +131,13 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m.lock.Lock()
 
 	mapTaskLen := len(files)
+
+	// remove intermediate files
+	for i := 0; i < mapTaskLen; i++ {
+		for j := 0; j < nReduce; j++ {
+			os.Remove("mr-int-" + strconv.Itoa(i) + "-" + strconv.Itoa(j))
+		}
+	}
 	taskLen := mapTaskLen + nReduce
 	m.taskList = make([]tasks, taskLen)
 	m.nReduce = nReduce
@@ -145,8 +153,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 		m.taskList[i].state = 0
 		m.taskList[i].startTime = startTime
 	}
-	// fmt.Printf("master starting time = %v\n", time.Now())
-	// fmt.Println(m.taskList, len(m.taskList), cap(m.taskList))
+
 	m.lock.Unlock()
 	m.server()
 	return &m

@@ -54,7 +54,6 @@ func mapWorker(mapf func(string, string) []KeyValue, task TaskArgs) bool {
 	for i := 0; i < task.NReduce; i++ {
 		cwd, _ := os.Getwd()
 		tempFile[i], _ = ioutil.TempFile(cwd, getIntermediateFileName(task.TaskNumber, i))
-		// tempFile[i], _ = os.Create(getIntermediateFileName(task.TaskNumber, i))
 		encoders[i] = json.NewEncoder(tempFile[i])
 	}
 
@@ -84,7 +83,7 @@ func mapWorker(mapf func(string, string) []KeyValue, task TaskArgs) bool {
 func reduceWorker(reducef func(string, []string) string, task TaskArgs) bool {
 	intermediate := ByKey{}
 
-	// get blocked if file doesnt exist atleast retry for 10 seconds and exit without doing
+	// get blocked if file doesnt exist atleast retry for 1 seconds and exit
 	for i := 0; i < task.NMap; i++ {
 		filename := getIntermediateFileName(i, task.TaskNumber)
 		start := time.Now()
@@ -118,8 +117,7 @@ func reduceWorker(reducef func(string, []string) string, task TaskArgs) bool {
 
 	cwd, _ := os.Getwd()
 	ofile, err := ioutil.TempFile(cwd, "mr-out-"+strconv.Itoa(task.TaskNumber))
-	// oname := "mr-out-" + strconv.Itoa(task.TaskNumber) + "-temp"
-	// ofile, err := os.Create(oname)
+
 	if err != nil {
 		fmt.Println("file creation error", "mr-out-"+strconv.Itoa(task.TaskNumber))
 	}
@@ -155,10 +153,6 @@ func reduceWorker(reducef func(string, []string) string, task TaskArgs) bool {
 //
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
-	// task := TaskArgs{"r", "", 0, 10, 8}
-	// reduceWorker(reducef, task)
-	// fmt.Println("hash(ABOUT)%r", ihash("ABOUT")%10)
 	for {
 		args := TaskArgs{}
 		reply := ExampleReply{}
@@ -179,10 +173,9 @@ func Worker(mapf func(string, string) []KeyValue,
 				return
 			}
 		} else {
-			time.Sleep(time.Second / 10)
+			time.Sleep(time.Second / 2)
 		}
 	}
-
 }
 
 //
