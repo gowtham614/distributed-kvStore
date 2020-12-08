@@ -19,7 +19,6 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -96,7 +95,6 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
 	var term int
 	var isleader bool
 	rf.mu.Lock()
@@ -172,7 +170,10 @@ func (rf *Raft) startElection() {
 	// fmt.Println("Election() ", rf.me)
 	for !rf.killed() {
 		// fmt.Println("Election timeout - timenow", rf.me, time.Now().Sub(rf.electionTimeout))
-		if time.Now().Sub(rf.electionTimeout) > 0 { // may be this is wrong
+		rf.mu.Lock()
+		isTimeout := (time.Now().Sub(rf.electionTimeout) > 0)
+		rf.mu.Unlock()
+		if isTimeout { // may be this is wrong
 			// fmt.Println("started Election ", rf.me)
 			var args RequestVoteArgs
 
@@ -190,14 +191,13 @@ func (rf *Raft) startElection() {
 			args.LastLogTerm = rf.log[len(rf.log)-1].Term
 			args.LastLogIndex = len(rf.log) - 1
 			args.Term = rf.currentTerm
-			// var wg sync.WaitGroup
 			rf.voteCount = 1
 			rf.mu.Unlock()
 			for i := 0; (i < len(rf.peers)) && (rf.state == STATE_CANDIDATE); i++ { // this should be allowed only when candidate
 				if i == rf.me {
 					continue
 				}
-				// wg.Add(1)
+
 				go func(x int) {
 					// create thread
 					var reply RequestVoteReply
@@ -205,6 +205,7 @@ func (rf *Raft) startElection() {
 					for !rf.sendRequestVote(x, &args, &reply) { // wrong infinite block
 						// fmt.Println("waiting for request vote to get reply ", rf.me, x)
 					}
+					// *** we need to check for the reply coming for older term irrelevant replies and throw it away
 					rf.mu.Lock()
 					defer rf.mu.Unlock()
 					// count vote check for candidate legitamacy
@@ -229,11 +230,8 @@ func (rf *Raft) startElection() {
 						// not got vote, check and change to follower may be
 						// fmt.Println("vote not granted", rf.me, x)
 					}
-					// wg.Done()
 				}(i)
 			}
-			// wg.Wait()
-
 		} else {
 			time.Sleep(time.Second / 200)
 		}
@@ -265,7 +263,7 @@ func (rf *Raft) hearBeat() {
 				args.PrevLogTerm = rf.log[idx].Term
 				args.Term = rf.currentTerm
 				rf.mu.Unlock()
-				// var wg sync.WaitGroup
+
 				for i := 0; i < len(rf.peers); i++ {
 					if i == rf.me {
 						continue
@@ -276,7 +274,6 @@ func (rf *Raft) hearBeat() {
 						break
 					}
 					rf.mu.Unlock()
-					// wg.Add(1)
 					go func(x int) {
 						var reply AppendEntriesReply
 						for !rf.sendAppendEntries(x, &args, &reply) {
@@ -288,6 +285,7 @@ func (rf *Raft) hearBeat() {
 
 							rf.mu.Unlock()
 						}
+						// *** we need to check for the reply coming for older term irrelevant replies and throw it away
 						if reply.Success == false {
 							// fmt.Println("sendAppendEntries reply failed", rf.me, x)
 							rf.mu.Lock()
@@ -297,14 +295,10 @@ func (rf *Raft) hearBeat() {
 							}
 							rf.mu.Unlock()
 						}
-						// wg.Done()
 					}(i)
 				}
-				// wg.Wait()
-
 			}
 		}
-
 		time.Sleep(time.Second / 10)
 	}
 }
@@ -467,7 +461,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 // should call killed() to check whether it should stop.
 //
 func (rf *Raft) Kill() {
-	fmt.Println("killed ", rf.me)
+	// fmt.Println("killed ", rf.me)
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
 }
@@ -491,6 +485,7 @@ func (rf *Raft) killed() bool {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
+	rf.mu.Lock()
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
@@ -499,12 +494,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.log = append(rf.log, LogEntry{Term: 0})
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+	rf.state = STATE_FOLLOWER
 
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	rf.electionTimeout = rf.getElectionTimeout()
+	rf.mu.Unlock()
 	go rf.startElection()
 	go rf.hearBeat()
 
