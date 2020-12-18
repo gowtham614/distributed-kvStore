@@ -176,7 +176,7 @@ func (rf *Raft) startElection() {
 		isTimeout := (time.Now().Sub(rf.electionTimeout) > 0)
 		rf.mu.Unlock()
 		if isTimeout { // may be this is wrong
-			// fmt.Println("started Election ", rf.me)
+			fmt.Println("started Election ", rf.me)
 			var args RequestVoteArgs
 
 			rf.mu.Lock()
@@ -231,7 +231,7 @@ func (rf *Raft) startElection() {
 							fmt.Println("became leader", rf.me)
 							for i := 0; i < len(rf.peers); i++ {
 								rf.nextIndex[i] = len(rf.log)
-								rf.matchIndex[i] = len(rf.log)
+								rf.matchIndex[i] = len(rf.log) - 1
 							}
 							return
 						}
@@ -248,7 +248,7 @@ func (rf *Raft) startElection() {
 }
 
 // its not fast enough??
-func (rf *Raft) hearBeat() {
+func (rf *Raft) heartBeat() {
 	lastHeartBeatTime := time.Now()
 	for !rf.killed() {
 		rf.mu.Lock()
@@ -266,11 +266,11 @@ func (rf *Raft) hearBeat() {
 
 				// check for correctness
 				// rf.mu.Lock()
-				idx := len(rf.log) - 1
+				// this should
+
 				args.LeaderCommit = rf.commitIndex
 				args.LeaderId = rf.me
-				args.PrevLogIndex = idx //max(idx-1, 0)
-				args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+
 				args.Term = rf.currentTerm
 				// rf.mu.Unlock()
 
@@ -278,6 +278,12 @@ func (rf *Raft) hearBeat() {
 					if i == rf.me {
 						continue
 					}
+					idx := rf.matchIndex[i] // len(rf.log) - 1
+					args.PrevLogIndex = idx // max(idx-1, 0)
+					args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+					args.Entries = rf.log[idx+1:]
+
+					// fmt.Println("entries", rf.me, " i =", i, args.Entries)
 					// rf.mu.Lock()
 					if rf.state != STATE_LEADER {
 						rf.mu.Unlock()
@@ -286,7 +292,7 @@ func (rf *Raft) hearBeat() {
 					// rf.mu.Unlock()
 					go func(x int) {
 						var reply AppendEntriesReply
-						for !rf.sendAppendEntries(x, &args, &reply) {
+						for !rf.sendAppendEntries(x, &args, &reply) { // may this should be if, since some can offline and cant be reached
 							rf.mu.Lock()
 							if rf.state != STATE_LEADER {
 								rf.mu.Unlock()
@@ -305,14 +311,22 @@ func (rf *Raft) hearBeat() {
 						// rf.mu.Unlock()
 
 						if reply.Success == false {
-							// fmt.Println("sendAppendEntries reply failed", rf.me, x)
+							fmt.Println("sendAppendEntries reply failed", rf.me, x)
 							// rf.mu.Lock()
 							if reply.Term > rf.currentTerm {
 								rf.state = STATE_FOLLOWER
 								rf.currentTerm = reply.Term
 							}
+
+							rf.nextIndex[x]--
+							rf.matchIndex[x]--
+							fmt.Println("match index[", x, "]", rf.matchIndex[x])
 							// rf.mu.Unlock()
+						} else {
+							rf.matchIndex[x] = len(rf.log) - 1
+							rf.nextIndex[x] = len(rf.log)
 						}
+
 					}(i)
 				}
 			}
@@ -355,7 +369,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.persist()
 		return
 	}
-	// fmt.Println("RequestVote, myid =", rf.me, "cid = ", args.CandidateId, " voted for, log upto date error", uptoDate)
+	fmt.Println("RequestVote, myid =", rf.me, "cid = ", args.CandidateId, " voted for, log upto date error", uptoDate)
 }
 
 type AppendEntriesArgs struct {
@@ -385,21 +399,33 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	idx := len(rf.log) - 1
 
 	// have doubt about this
-	if args.PrevLogTerm == rf.currentTerm {
-		if args.PrevLogIndex != idx {
-			// fmt.Println("Append entries fail ", rf.me, "cid = ", args.LeaderId, "log idx incorrect , equal term",
-			// "prev log index = ", args.PrevLogIndex, " idx = ", idx)
-			return
-		}
+	if args.PrevLogIndex > idx {
+		return
+	}
+
+	if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
+		fmt.Println("Append entries fail ", rf.me, "cid = ", args.LeaderId, "log idx incorrect , equal term",
+			"prev log index = ", args.PrevLogIndex, " idx = ", idx)
+		return
 	}
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = int(math.Min(float64(args.LeaderCommit), float64(idx)))
 	}
+	currIdx := args.PrevLogIndex + 1
 	// fmt.Println("Append entries setting to follower ", rf.me)
 	reply.Success = true
 	rf.state = STATE_FOLLOWER
 	rf.currentTerm = args.Term
-	rf.log = append(rf.log, args.Entries...)
+
+	if currIdx < idx {
+		rf.log = rf.log[:currIdx]
+		rf.log = append(rf.log, args.Entries...)
+	} else {
+		rf.log = append(rf.log, args.Entries...)
+	}
+	if len(args.Entries) > 0 {
+		fmt.Println("AppendEntries logs", rf.me, rf.log, "entries", args.Entries)
+	}
 	rf.persist()
 	rf.electionTimeout = rf.getElectionTimeout()
 	// fmt.Println("AppendEntries() success ", rf.me)
@@ -474,19 +500,20 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// we can send this via heart beat as well
 	term = rf.currentTerm
 	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: command})
-	index = len(rf.log) - 1
+
 	// check for correctness
 	// rf.mu.Lock()
 	var args AppendEntriesArgs
 	args.Term = rf.currentTerm
 	args.LeaderId = rf.me
-	args.PrevLogIndex = index - 1
-	args.PrevLogTerm = rf.log[index-1].Term
-	args.Entries = rf.log[index:]
 	args.LeaderCommit = rf.commitIndex
+	index = len(rf.log) - 1
+	args.PrevLogIndex = index - 1
+	args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+	args.Entries = rf.log[index:]
 
 	// rf.mu.Unlock()
-
+	fmt.Println("start() logs", rf.me, rf.log)
 	for i := 0; i < len(rf.peers); i++ {
 		if i == rf.me {
 			continue
@@ -496,6 +523,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			// rf.mu.Unlock()
 			break
 		}
+
 		// rf.mu.Unlock()
 		go func(x int) {
 			var reply AppendEntriesReply
@@ -520,7 +548,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 			if reply.Success == false {
 				// *** we need to make sure logs are consistent
-				// fmt.Println("Start() sendAppendEntries reply failed", rf.me, x)
+				fmt.Println("Start() sendAppendEntries reply failed", rf.me, x)
 				// rf.mu.Lock()
 				if reply.Term > rf.currentTerm {
 					rf.state = STATE_FOLLOWER
@@ -532,6 +560,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			}
 			// fmt.Println("Start() sendAppendEntries check majority")
 			rf.nextIndex[x] = index + 1
+			rf.matchIndex[x] = index
 			count := 1
 			for j := 0; j < len(rf.peers); j++ {
 				if rf.nextIndex[j] >= rf.nextIndex[x] {
@@ -624,7 +653,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.electionTimeout = rf.getElectionTimeout()
 	rf.mu.Unlock()
 	go rf.startElection()
-	go rf.hearBeat()
+	go rf.heartBeat()
 	go rf.applyLog()
 
 	return rf
