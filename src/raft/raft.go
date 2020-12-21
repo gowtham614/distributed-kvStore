@@ -91,7 +91,7 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	debugCount         int
+	debugCount         int  // remove this when working
 	heartBeatImmediate bool // to send heartbear immediately
 }
 
@@ -176,7 +176,7 @@ func (rf *Raft) startElection() {
 		rf.mu.Lock()
 		isTimeout := (time.Now().Sub(rf.electionTimeout).Microseconds() > 0)
 		rf.mu.Unlock()
-		if isTimeout { // may be this is wrong
+		if isTimeout {
 			rf.debugCount++
 			// fmt.Println("started Election ", rf.me, rf.electionTimeout, rf.debugCount)
 			var args RequestVoteArgs
@@ -205,10 +205,9 @@ func (rf *Raft) startElection() {
 				}
 
 				go func(x int) {
-					// create thread
 					var reply RequestVoteReply
 					// fmt.Println("sending req vote", rf.me, x)
-					if !rf.sendRequestVote(x, &args, &reply) { // wrong infinite block
+					if !rf.sendRequestVote(x, &args, &reply) {
 						return
 						// fmt.Println("waiting for request vote to get reply ", rf.me, x)
 					}
@@ -255,42 +254,31 @@ func (rf *Raft) startElection() {
 	}
 }
 
-// its not fast enough??
 func (rf *Raft) heartBeat() {
 	lastHeartBeatTime := time.Now()
 	for !rf.killed() {
 		rf.mu.Lock()
 		isLeader := (rf.state == STATE_LEADER)
-		// rf.mu.Unlock()
 		if isLeader {
-			// rf.mu.Lock()
 			rf.electionTimeout = rf.getElectionTimeout()
-			// rf.mu.Unlock()
 			if (time.Now().Sub(lastHeartBeatTime).Milliseconds() > 60) || rf.heartBeatImmediate { // send after 60 ms
 
 				// fmt.Println("sending heart beat", rf.me, rf.debugCount, "immediate", rf.heartBeatImmediate)
 				rf.heartBeatImmediate = false
 				rf.debugCount++
 
-				// check for correctness
-				// rf.mu.Lock()
-				// this should
-				// rf.mu.Unlock()
-
 				for i := 0; i < len(rf.peers); i++ {
 					if i == rf.me {
 						continue
 					}
-					// rf.mu.Lock()
 					if rf.state != STATE_LEADER {
-						// rf.mu.Unlock()
 						break
 					}
 
 					var tempargs AppendEntriesArgs
 
-					idx := max(rf.matchIndex[i], 0) // len(rf.log) - 1
-					tempargs.PrevLogIndex = idx     // max(idx-1, 0)
+					idx := max(rf.matchIndex[i], 0)
+					tempargs.PrevLogIndex = idx
 					tempargs.PrevLogTerm = rf.log[tempargs.PrevLogIndex].Term
 					tempargs.Entries = rf.log[idx+1:]
 					tempargs.LeaderCommit = rf.commitIndex
@@ -299,7 +287,6 @@ func (rf *Raft) heartBeat() {
 
 					tempargs.Term = rf.currentTerm
 
-					// rf.mu.Unlock()
 					go func(x int, args AppendEntriesArgs) {
 
 						var reply AppendEntriesReply
@@ -310,22 +297,17 @@ func (rf *Raft) heartBeat() {
 
 						if !rf.sendAppendEntries(x, &args, &reply) { // may this should be if, since some can offline and cant be reached
 							return
-
-							// rf.mu.Unlock()
 						}
 						// *** we need to check for the reply coming for older term irrelevant replies and throw it away
 
 						rf.mu.Lock()
 						defer rf.mu.Unlock()
 						if args.Term != rf.currentTerm || rf.state != STATE_LEADER { // some older reply coming
-							// rf.mu.Unlock()
 							return
 						}
-						// rf.mu.Unlock()
 
 						if reply.Success == false {
 							// fmt.Println("sendAppendEntries reply failed", rf.me, x)
-							// rf.mu.Lock()
 							if reply.Term > rf.currentTerm {
 								// fmt.Println("heartbeat() became follower", rf.me)
 								rf.state = STATE_FOLLOWER
@@ -338,22 +320,18 @@ func (rf *Raft) heartBeat() {
 							rf.heartBeatImmediate = true
 							// fmt.Println("reducing match index[", x, "]", rf.matchIndex[x])
 							return
-							// rf.mu.Unlock()
 						} else {
 							rf.matchIndex[x] = args.PrevLogIndex + len(args.Entries)
 							rf.nextIndex[x] = rf.matchIndex[x] + 1
 							// fmt.Println("success increasing match index[", x, "]", rf.matchIndex[x])
 						}
 
-						// rf.nextIndex[x] = idx + 1
-						// rf.matchIndex[x] = idx
 						count := 1
 						for j := 0; j < len(rf.peers); j++ {
 							if rf.matchIndex[j] >= rf.matchIndex[x] {
 								count++
 								if count > (len(rf.peers) / 2) {
 									// fmt.Println("Start() sendAppendEntries send applyMsg")
-									// rf.applyCh <- ApplyMsg{true, command, index}
 									// ** what we the old commit index comes later in time
 									rf.commitIndex = rf.matchIndex[x]
 								}
@@ -371,9 +349,6 @@ func (rf *Raft) heartBeat() {
 	}
 }
 
-//
-// example RequestVote RPC handler.
-//
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
@@ -560,7 +535,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		// fmt.Println("Start() not leader", rf.me, time.Now().Sub(rf.electionTimeout))
 		return index, term, isLeader
 	}
-	// we can send this via heart beat as well
+
 	term = rf.currentTerm
 	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: command})
 	// fmt.Println("start() logs", rf.me, command, rf.log)
@@ -639,8 +614,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
-	rf.commitIndex = 0
-	rf.lastApplied = 0
 	rf.electionTimeout = rf.getElectionTimeout()
 	rf.mu.Unlock()
 	go rf.startElection()
