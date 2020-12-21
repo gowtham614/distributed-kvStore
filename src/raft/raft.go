@@ -229,8 +229,8 @@ func (rf *Raft) startElection() {
 
 					if reply.VoteGranted {
 						rf.voteCount++
-						fmt.Println("vote granted", rf.me, x)
-						if rf.voteCount >= (len(rf.peers) / 2) {
+						// fmt.Println("vote granted", rf.me, x)
+						if rf.voteCount > (len(rf.peers) / 2) {
 							rf.state = STATE_LEADER
 							// we should send empty append entries
 							fmt.Println("became leader", rf.me)
@@ -245,6 +245,7 @@ func (rf *Raft) startElection() {
 						// not got vote, check and change to follower may be
 						// fmt.Println("vote not granted", rf.me, x)
 					}
+					return
 				}(i)
 			}
 		} else {
@@ -280,28 +281,31 @@ func (rf *Raft) heartBeat() {
 					}
 					// rf.mu.Lock()
 					if rf.state != STATE_LEADER {
-						rf.mu.Unlock()
+						// rf.mu.Unlock()
 						break
 					}
+
+					var tempargs AppendEntriesArgs
+
+					idx := max(rf.matchIndex[i], 0) // len(rf.log) - 1
+					tempargs.PrevLogIndex = idx     // max(idx-1, 0)
+					tempargs.PrevLogTerm = rf.log[tempargs.PrevLogIndex].Term
+					tempargs.Entries = rf.log[idx+1:]
+					tempargs.LeaderCommit = rf.commitIndex
+					tempargs.LeaderId = rf.me
+					tempargs.DebugCount = rf.debugCount
+
+					tempargs.Term = rf.currentTerm
+
 					// rf.mu.Unlock()
-					go func(x int) {
+					go func(x int, args AppendEntriesArgs) {
 
 						var reply AppendEntriesReply
-						var args AppendEntriesArgs
-						rf.mu.Lock()
-						idx := rf.matchIndex[x] // len(rf.log) - 1
-						args.PrevLogIndex = idx // max(idx-1, 0)
-						args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
-						args.Entries = rf.log[idx+1:]
-						args.LeaderCommit = rf.commitIndex
-						args.LeaderId = rf.me
-						args.DebugCount = rf.debugCount
 
-						args.Term = rf.currentTerm
 						// fmt.Println("entries", rf.me, " i =", x, "prev log idx =", args.PrevLogIndex, args.Entries)
 
 						// fmt.Println("count", rf.debugCount, " sendAppendEntries", rf.me, x, "match index[", x, "]", rf.matchIndex[x], "prev index", args.PrevLogIndex)
-						rf.mu.Unlock()
+
 						if !rf.sendAppendEntries(x, &args, &reply) { // may this should be if, since some can offline and cant be reached
 							return
 
@@ -311,14 +315,14 @@ func (rf *Raft) heartBeat() {
 
 						rf.mu.Lock()
 						defer rf.mu.Unlock()
-						if args.Term != rf.currentTerm { // some older reply coming
+						if args.Term != rf.currentTerm || rf.state != STATE_LEADER { // some older reply coming
 							// rf.mu.Unlock()
 							return
 						}
 						// rf.mu.Unlock()
 
 						if reply.Success == false {
-							fmt.Println("sendAppendEntries reply failed", rf.me, x)
+							// fmt.Println("sendAppendEntries reply failed", rf.me, x)
 							// rf.mu.Lock()
 							if reply.Term > rf.currentTerm {
 								fmt.Println("heartbeat() became follower", rf.me)
@@ -330,7 +334,7 @@ func (rf *Raft) heartBeat() {
 							rf.nextIndex[x]--
 							rf.matchIndex[x]--
 							rf.heartBeatImmediate = true
-							fmt.Println("reducing match index[", x, "]", rf.matchIndex[x])
+							// fmt.Println("reducing match index[", x, "]", rf.matchIndex[x])
 							return
 							// rf.mu.Unlock()
 						} else {
@@ -354,8 +358,8 @@ func (rf *Raft) heartBeat() {
 							}
 
 						}
-
-					}(i)
+						return
+					}(i, tempargs)
 				}
 				lastHeartBeatTime = time.Now()
 			}
@@ -393,13 +397,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	term := rf.log[idx].Term
 	uptoDate := (args.LastLogTerm > term || (args.LastLogTerm == term && args.LastLogIndex >= idx))
 	if ((rf.votedFor == -1) || rf.votedFor == args.CandidateId) && uptoDate {
+		fmt.Println("RequestVote success, myid =", rf.me, "cid = ", args.CandidateId, "error log upto date ", uptoDate,
+			"my term", term, "my idx = ", idx, "cad term ", args.LastLogTerm, "cad index", args.LastLogIndex)
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
 		rf.currentTerm = args.Term
 		rf.persist()
 		return
 	}
-	fmt.Println("RequestVote, myid =", rf.me, "cid = ", args.CandidateId, " voted for", rf.votedFor, "error log upto date ", uptoDate)
+	// fmt.Println("RequestVote, myid =", rf.me, "cid = ", args.CandidateId, " voted for", rf.votedFor, "error log upto date ", uptoDate)
 }
 
 type AppendEntriesArgs struct {
@@ -424,7 +430,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = false
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
-		// fmt.Println("Append entries fail ", rf.me, "cid = ", args.LeaderId, "less term my term ", rf.currentTerm, "candidate term", args.Term)
+		fmt.Println("Append entries fail ", rf.me, "cid = ", args.LeaderId, "less term my term ", rf.currentTerm, "candidate term", args.Term)
 		return
 	}
 	idx := len(rf.log) - 1
@@ -555,7 +561,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// we can send this via heart beat as well
 	term = rf.currentTerm
 	rf.log = append(rf.log, LogEntry{Term: rf.currentTerm, Command: command})
-	fmt.Println("start() logs", rf.me, rf.log)
+	fmt.Println("start() logs", rf.me, command, rf.log)
 	index = len(rf.log) - 1
 	rf.heartBeatImmediate = true
 	return index, term, isLeader
