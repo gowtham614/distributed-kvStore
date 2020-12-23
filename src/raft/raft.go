@@ -19,7 +19,6 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -237,7 +236,7 @@ func (rf *Raft) startElection() {
 						if rf.voteCount > (len(rf.peers) / 2) {
 							rf.state = STATE_LEADER
 							// we should send empty append entries
-							fmt.Println("became leader", rf.me)
+							// fmt.Println("became leader", rf.me)
 							for j := 0; j < len(rf.peers); j++ {
 								rf.nextIndex[j] = len(rf.log)
 								rf.matchIndex[j] = 0
@@ -300,13 +299,13 @@ func (rf *Raft) heartBeat() {
 
 						// fmt.Println("entries", rf.me, " i =", x, "prev log idx =", args.PrevLogIndex, args.Entries)
 
-						rf.mu.Lock()
-						fmt.Println("count", tempargs.DebugCount, " sendAppendEntries", rf.me, x, "next index[", x, "]", rf.nextIndex[x], "prev index", args.PrevLogIndex)
-						rf.mu.Unlock()
+						// rf.mu.Lock()
+						// // fmt.Println("count", tempargs.DebugCount, " sendAppendEntries", rf.me, x, "next index[", x, "]", rf.nextIndex[x], "prev index", args.PrevLogIndex)
+						// rf.mu.Unlock()
 						if !rf.sendAppendEntries(x, &args, &reply) { // may this should be if, since some can offline and cant be reached
-							rf.mu.Lock()
-							fmt.Println("count", tempargs.DebugCount, " sendAppendEntries failed to send", rf.me, x, "next index[", x, "]", rf.nextIndex[x], "prev index", args.PrevLogIndex)
-							rf.mu.Unlock()
+							// rf.mu.Lock()
+							// // fmt.Println("count", tempargs.DebugCount, " sendAppendEntries failed to send", rf.me, x, "next index[", x, "]", rf.nextIndex[x], "prev index", args.PrevLogIndex)
+							// rf.mu.Unlock()
 							return
 						}
 						// *** we need to check for the reply coming for older term irrelevant replies and throw it away
@@ -330,7 +329,7 @@ func (rf *Raft) heartBeat() {
 							rf.nextIndex[x] = min(reply.NextIndex, len(rf.log))
 							//rf.matchIndex[x] = reply.NextIndex - 1
 							rf.heartBeatImmediate = true
-							fmt.Println("count", tempargs.DebugCount, " sendAppendEntries", rf.me, " reducing next index[", x, "]", rf.nextIndex[x])
+							// fmt.Println("count", tempargs.DebugCount, " sendAppendEntries", rf.me, " reducing next index[", x, "]", rf.nextIndex[x])
 							return
 						} else {
 							rf.nextIndex[x] = min(reply.NextIndex, len(rf.log))
@@ -426,7 +425,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Term = rf.currentTerm
 	reply.NextIndex = idx + 1
 	if args.Term < rf.currentTerm {
-		fmt.Println("count ", args.DebugCount, "fail Append entries", rf.me, "cid = ", args.LeaderId, "less term my term ", rf.currentTerm, "candidate term", args.Term)
+		// fmt.Println("count ", args.DebugCount, "fail Append entries", rf.me, "cid = ", args.LeaderId, "less term my term ", rf.currentTerm, "candidate term", args.Term)
 		return
 	}
 
@@ -442,20 +441,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// have doubt about this
 	if args.PrevLogIndex > idx {
-		fmt.Println("count ", args.DebugCount, "fail idx greater Append entries", rf.me, "cid = ", args.LeaderId, "log idx incorrect , equal term",
-			"prev log index = ", args.PrevLogIndex, " idx = ", idx)
-		fmt.Println("count ", args.DebugCount, "next index", reply.NextIndex) //, rf.log)
+		// fmt.Println("count ", args.DebugCount, "fail idx greater Append entries", rf.me, "cid = ", args.LeaderId, "log idx incorrect , equal term",
+		// 	"prev log index = ", args.PrevLogIndex, " idx = ", idx)
+		// fmt.Println("count ", args.DebugCount, "next index", reply.NextIndex) //, rf.log)
 		// rf.persist()
 		return
 	}
 
 	if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
-		fmt.Println("count ", args.DebugCount, "fail Append entries", rf.me, "cid = ", args.LeaderId, "log idx incorrect , equal term",
-			"prev log index = ", args.PrevLogIndex, " idx = ", idx, "term incorrect")
+		// fmt.Println("count ", args.DebugCount, "fail Append entries", rf.me, "cid = ", args.LeaderId, "log idx incorrect , equal term",
+		// 	"prev log index = ", args.PrevLogIndex, " idx = ", idx, "term incorrect")
 		for i := args.PrevLogIndex - 1; i >= 0; i-- {
 			if rf.log[i].Term != rf.log[args.PrevLogIndex].Term {
 				reply.NextIndex = i + 1
-				fmt.Println("count ", args.DebugCount, rf.me, "cid = ", args.LeaderId, "next index", reply.NextIndex)
+				// fmt.Println("count ", args.DebugCount, rf.me, "cid = ", args.LeaderId, "next index", reply.NextIndex)
 				// rf.persist()
 				return
 			}
@@ -488,16 +487,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				if (rf.log[i].Command != args.Entries[j].Command) || (rf.log[i].Term != args.Entries[j].Term) {
 					rf.log = rf.log[:i]
 					rf.log = append(rf.log, args.Entries[j:]...)
-					fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "deleted logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
-						"idx", idx, "next index", reply.NextIndex)
+					// fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "deleted logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
+					// 	"idx", idx, "next index", reply.NextIndex)
 					reply.NextIndex = len(rf.log)
 					return
 				}
 				j++
 			}
 			reply.NextIndex = len(rf.log)
-			fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "some old rpc", "previndex", args.PrevLogIndex,
-				"idx", idx, "next index", reply.NextIndex)
+			// fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "some old rpc", "previndex", args.PrevLogIndex,
+			// 	"idx", idx, "next index", reply.NextIndex)
 			return
 		}
 
@@ -505,15 +504,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.log = append(rf.log, args.Entries...)
 		// rf.persist()
 		reply.NextIndex = len(rf.log)
-		fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "deleted logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
-			"idx", idx, "next index", reply.NextIndex)
+		// fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "deleted logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
+		// 	"idx", idx, "next index", reply.NextIndex)
 		return
 	} else {
 		rf.log = append(rf.log, args.Entries...)
 		reply.NextIndex = len(rf.log)
 		// rf.persist()
-		fmt.Println("count ", args.DebugCount, "success append entries", rf.me, "cid = ", args.LeaderId, "appended logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
-			"idx", idx, "next index", reply.NextIndex)
+		// fmt.Println("count ", args.DebugCount, "success append entries", rf.me, "cid = ", args.LeaderId, "appended logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
+		// 	"idx", idx, "next index", reply.NextIndex)
 	}
 
 	if args.LeaderCommit > rf.commitIndex {
@@ -525,7 +524,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 	fmt.Println("count ", args.DebugCount, "AppendEntries logs", rf.me, rf.log, "entries", args.Entries, args.PrevLogIndex)
 	// }
 	// rf.persist()
-	fmt.Println("count ", args.DebugCount, "success Append entries", rf.me, "cid = ", args.LeaderId)
+	// fmt.Println("count ", args.DebugCount, "success Append entries", rf.me, "cid = ", args.LeaderId)
 	return
 }
 
@@ -599,7 +598,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	m := LogEntry{Term: rf.currentTerm, Command: command}
 	rf.log = append(rf.log, m)
 	rf.persist()
-	fmt.Println("start()", rf.me, m)
+	// fmt.Println("start()", rf.me, m)
 	index = len(rf.log) - 1
 	rf.heartBeatImmediate = true
 	return index, term, isLeader
@@ -617,7 +616,7 @@ func (rf *Raft) applyLog() {
 			m := ApplyMsg{true, rf.log[rf.lastApplied].Command, rf.lastApplied}
 
 			rf.applyCh <- m
-			fmt.Println("apply log()", rf.me, "last applied", rf.lastApplied, m)
+			// fmt.Println("apply log()", rf.me, "last applied", rf.lastApplied, m)
 		}
 		rf.mu.Unlock()
 		time.Sleep(time.Millisecond * 10)
