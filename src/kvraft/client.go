@@ -3,6 +3,7 @@ package kvraft
 import (
 	"crypto/rand"
 	"math/big"
+	"sync"
 
 	"../labrpc"
 )
@@ -10,6 +11,7 @@ import (
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+	mu       sync.Mutex
 	leaderId int
 	me       int64
 	opID     int64
@@ -24,9 +26,10 @@ func nrand() int64 {
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
+
 	ck.servers = servers
 	ck.leaderId = 0
-	ck.opID = 0
+	ck.opID = 1
 	ck.me = nrand()
 	return ck
 }
@@ -47,6 +50,11 @@ func (ck *Clerk) Get(key string) string {
 	// fmt.Println("Client Get", key)
 	var args GetArgs
 	args.Key = key
+	ck.mu.Lock()
+	args.OpID = ck.opID
+	ck.opID++
+	ck.mu.Unlock()
+	args.ClientID = ck.me
 	var reply GetReply
 	reply.Err = ErrWrongLeader
 	// we should randomly call a server, check for leader
@@ -61,7 +69,7 @@ func (ck *Clerk) Get(key string) string {
 			return ""
 		}
 		if reply.Err == ErrWrongLeader || !ok {
-			ck.leaderId = int(nrand()) % len(ck.servers)
+			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
 		}
 	}
 	return ""
@@ -83,7 +91,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Op = op
 	args.Value = value
 	args.Key = key
+	ck.mu.Lock()
+	args.OpID = ck.opID
+	ck.opID++
+	ck.mu.Unlock()
+	args.ClientID = ck.me
+
 	var reply PutAppendReply
+	reply.Err = ErrWrongLeader
 	// we should randomly call a server, check for leader
 	for reply.Err != OK {
 		ok := ck.servers[ck.leaderId].Call("KVServer.PutAppend", &args, &reply)
@@ -91,7 +106,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			return
 		}
 		if reply.Err == ErrWrongLeader || !ok {
-			ck.leaderId = int(nrand()) % len(ck.servers)
+			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
 		}
 	}
 	// fmt.Println("Client PutAppend return", key, value)

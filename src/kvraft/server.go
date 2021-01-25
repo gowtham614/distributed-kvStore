@@ -21,9 +21,11 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 }
 
 type Op struct {
-	Cmd string
-	Key string
-	Val string
+	Cmd      string
+	Key      string
+	Val      string
+	ClientID int64
+	OpID     int64
 }
 
 type Result struct {
@@ -49,10 +51,12 @@ type KVServer struct {
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// fmt.Println("Server Get", kv.me)
+	// fmt.Println("get, ", kv.me, args.OpID, args.Key)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = "Get"
+	op.ClientID = args.ClientID
+	op.OpID = args.OpID
 	var res Result
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
@@ -90,10 +94,21 @@ func (kv *KVServer) sendRaftMsg(op Op, res *Result) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// fmt.Println("Server PutAppend", kv.me)
+	// fmt.Println("put append, ", kv.me, args.OpID, args.Key, args.Value)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = args.Op
 	op.Val = args.Value
+	op.ClientID = args.ClientID
+	op.OpID = args.OpID
+	kv.mu.Lock()
+	id := kv.lastAck[op.ClientID]
+	kv.mu.Unlock()
+	if id >= op.OpID {
+		// fmt.Println("duplicate put append, ", kv.me, args.OpID, args.Key, args.Value)
+		reply.Err = OK
+		return
+	}
 	var res Result
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
@@ -112,10 +127,19 @@ func (kv *KVServer) receiveRaftMsg() {
 		op := msg.Command.(Op)
 		var res Result
 		res.Err = OK
+
 		if op.Cmd == "Put" {
-			kv.db[op.Key] = op.Val
+			if kv.lastAck[op.ClientID] < op.OpID {
+				kv.db[op.Key] = op.Val
+			} else {
+				// fmt.Println("duplicate receiveRaftMsg put, ", kv.me, op.Key, op.Val)
+			}
 		} else if op.Cmd == "Append" {
-			kv.db[op.Key] += op.Val
+			if kv.lastAck[op.ClientID] < op.OpID {
+				kv.db[op.Key] += op.Val
+			} else {
+				// fmt.Println("duplicate receiveRaftMsg append, ", kv.me, op.Key, op.Val)
+			}
 		} else if op.Cmd == "Get" {
 			_, ok := kv.db[op.Key]
 			if !ok {
@@ -128,6 +152,7 @@ func (kv *KVServer) receiveRaftMsg() {
 		res.Val = kv.db[op.Key]
 
 		kv.resultCh[msg.CommandIndex] <- res
+		kv.lastAck[op.ClientID] = op.OpID
 		// fmt.Println("Server receiveRaftMsg, posting on channel", kv.me)
 		kv.mu.Unlock()
 	}
@@ -183,6 +208,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.db = make(map[string]string)
 	kv.resultCh = make(map[int]chan Result)
+	kv.lastAck = make(map[int64]int64)
 
 	// You may need initialization code here.
 	go kv.receiveRaftMsg()
