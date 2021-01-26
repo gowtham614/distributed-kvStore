@@ -61,9 +61,9 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	reply.Err = res.Err
 	reply.Value = res.Val
 	// if len(reply.Value) > 10 {
-	// 	fmt.Println("get, ", kv.me, args.ClientID, args.OpID, args.Key, reply.Value[len(reply.Value)-10:])
+	// 	fmt.Println("get, ", kv.me, args.ClientID, args.OpID, "key =", args.Key, reply.Value[len(reply.Value)-10:])
 	// } else {
-	// 	fmt.Println("get, ", kv.me, args.ClientID, args.OpID, args.Key, reply.Value)
+	// 	fmt.Println("get, ", kv.me, args.ClientID, args.OpID, "key =", args.Key, reply.Value)
 	// }
 }
 
@@ -88,15 +88,15 @@ func (kv *KVServer) sendRaftMsg(op Op, res *Result) {
 	select {
 	case result := <-p:
 		if op.Cmd != result.Cmd || op.Key != result.Key {
-			// fmt.Println("sendRaftMsg no key", kv.me, op.ClientID, op.OpID, op.Cmd, op.Key)
-			res.Err = ErrNoKey
+			// fmt.Println("sendRaftMsg no key", kv.me, op.ClientID, op.OpID, op.Cmd, "key =", op.Key)
+			res.Err = ErrWrongLeader
 			return
 		}
 
 		if op.Cmd == "Put" || op.Cmd == "Append" {
 			if op.Val != result.Val {
-				// fmt.Println("sendRaftMsg put/A no key", kv.me, op.ClientID, op.OpID, op.Cmd, op.Key)
-				res.Err = ErrNoKey
+				// fmt.Println("sendRaftMsg put/A no key", kv.me, op.ClientID, op.OpID, op.Cmd, "key =", op.Key)
+				res.Err = ErrWrongLeader
 				return
 			}
 		}
@@ -106,26 +106,25 @@ func (kv *KVServer) sendRaftMsg(op Op, res *Result) {
 		res.Err = result.Err
 
 	case <-time.After(200 * time.Millisecond):
-		// fmt.Println("Server Get timeout", kv.me)
-		// fmt.Println("sendRaftMsg timeout no key", kv.me, op.ClientID, op.OpID, op.Cmd, op.Key)
+		// fmt.Println("sendRaftMsg timeout wrongleader", kv.me, op.ClientID, op.OpID, op.Cmd, "key =", op.Key)
 		res.Err = ErrWrongLeader
 	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// fmt.Println("Server PutAppend", kv.me)
-	// fmt.Println("put append, ", kv.me, args.ClientID, args.OpID, args.Key, args.Value)
+	// fmt.Println("put append, ", kv.me, args.ClientID, args.OpID, "key =", args.Key, args.Value)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = args.Op
 	op.Val = args.Value
 	op.ClientID = args.ClientID
 	op.OpID = args.OpID
+
 	kv.mu.Lock()
 	id := kv.lastAck[op.ClientID]
 	kv.mu.Unlock()
 	if id >= op.OpID {
-		// fmt.Println("duplicate put append, ", kv.me, args.ClientID, args.OpID, args.Key, args.Value)
+		// fmt.Println("duplicate put append, ", kv.me, args.ClientID, args.OpID, "key =", args.Key, args.Value, kv.lastAck)
 		reply.Err = OK
 		return
 	}
@@ -147,18 +146,18 @@ func (kv *KVServer) receiveRaftMsg() {
 			if kv.lastAck[op.ClientID] < op.OpID {
 				kv.db[op.Key] = op.Val
 			} else {
-				// fmt.Println("duplicate receiveRaftMsg put, ", kv.me, op.ClientID, op.OpID, op.Key, op.Val)
+				// fmt.Println("duplicate receiveRaftMsg put, ", kv.me, op.ClientID, op.OpID, "key =", op.Key, op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Append" {
 			if kv.lastAck[op.ClientID] < op.OpID {
 				kv.db[op.Key] += op.Val
 			} else {
-				// fmt.Println("duplicate receiveRaftMsg append, ", kv.me, op.ClientID, op.OpID, op.Key, op.Val)
+				// fmt.Println("duplicate receiveRaftMsg append, ", kv.me, op.ClientID, op.OpID, "key =", op.Key, op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Get" {
 			_, ok := kv.db[op.Key]
 			if !ok {
-				// fmt.Println("receiveRaftMsg no key", kv.me, op.ClientID, op.OpID, op.Cmd, op.Key)
+				// fmt.Println("receiveRaftMsg no key", kv.me, op.ClientID, op.OpID, op.Cmd, "key =", op.Key, kv.lastAck)
 				res.Err = ErrNoKey
 			}
 		}
