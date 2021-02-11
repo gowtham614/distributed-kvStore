@@ -115,13 +115,6 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.currentTerm)
@@ -327,15 +320,12 @@ func (rf *Raft) heartBeat() {
 							}
 
 							rf.nextIndex[x] = min(reply.NextIndex, len(rf.log))
-							//rf.matchIndex[x] = reply.NextIndex - 1
 							rf.heartBeatImmediate = true
 							// fmt.Println("count", tempargs.DebugCount, " sendAppendEntries", rf.me, " reducing next index[", x, "]", rf.nextIndex[x])
 							return
 						} else {
 							rf.nextIndex[x] = min(reply.NextIndex, len(rf.log))
 							rf.matchIndex[x] = reply.NextIndex - 1
-							// rf.matchIndex[x] = args.PrevLogIndex + len(args.Entries)
-							// rf.nextIndex[x] = rf.matchIndex[x] + 1
 							// fmt.Println("success increasing match index[", x, "]", rf.matchIndex[x])
 						}
 
@@ -380,7 +370,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.state = STATE_FOLLOWER
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
-		// rf.persist()
 	}
 	// candidate’s log is at least as up-to-date as receiver’s log, grant vote
 
@@ -393,7 +382,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
 		rf.currentTerm = args.Term
-		// rf.persist()
 		return
 	}
 	// fmt.Println("RequestVote, myid =", rf.me, "cid = ", args.CandidateId, " voted for", rf.votedFor, "error log upto date ", uptoDate)
@@ -434,7 +422,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// fmt.Println("count ", args.DebugCount, "appendentries() became follower", rf.me)
 		rf.state = STATE_FOLLOWER
 		rf.votedFor = -1
-		// rf.persist()
 	}
 
 	rf.electionTimeout = rf.getElectionTimeout()
@@ -444,7 +431,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// fmt.Println("count ", args.DebugCount, "fail idx greater Append entries", rf.me, "cid = ", args.LeaderId, "log idx incorrect , equal term",
 		// 	"prev log index = ", args.PrevLogIndex, " idx = ", idx)
 		// fmt.Println("count ", args.DebugCount, "next index", reply.NextIndex) //, rf.log)
-		// rf.persist()
 		return
 	}
 
@@ -455,11 +441,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if rf.log[i].Term != rf.log[args.PrevLogIndex].Term {
 				reply.NextIndex = i + 1
 				// fmt.Println("count ", args.DebugCount, rf.me, "cid = ", args.LeaderId, "next index", reply.NextIndex)
-				// rf.persist()
 				return
 			}
 		}
-		// rf.persist()
 		return
 	}
 
@@ -471,7 +455,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	rf.state = STATE_FOLLOWER
 	rf.currentTerm = args.Term
-	// rf.persist()
+
 	if currIdx <= idx {
 		// if rf.commitIndex > currIdx {
 		// 	fmt.Println("count ", args.DebugCount, "append entries ", rf.me, "curridx", currIdx, "commit index", rf.commitIndex, "failed return")
@@ -502,7 +486,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		rf.log = rf.log[:currIdx]
 		rf.log = append(rf.log, args.Entries...)
-		// rf.persist()
 		reply.NextIndex = len(rf.log)
 		// fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "deleted logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
 		// 	"idx", idx, "next index", reply.NextIndex)
@@ -510,7 +493,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	} else {
 		rf.log = append(rf.log, args.Entries...)
 		reply.NextIndex = len(rf.log)
-		// rf.persist()
 		// fmt.Println("count ", args.DebugCount, "success append entries", rf.me, "cid = ", args.LeaderId, "appended logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,
 		// 	"idx", idx, "next index", reply.NextIndex)
 	}
@@ -523,7 +505,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// if len(args.Entries) > 0 {
 	// 	fmt.Println("count ", args.DebugCount, "AppendEntries logs", rf.me, rf.log, "entries", args.Entries, args.PrevLogIndex)
 	// }
-	// rf.persist()
 	// fmt.Println("count ", args.DebugCount, "success Append entries", rf.me, "cid = ", args.LeaderId)
 	return
 }
