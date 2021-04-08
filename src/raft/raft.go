@@ -596,7 +596,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if newLength <= rf.log[len(rf.log)-1].Idx+1 {
 			j := 0
 			for i := args.PrevLogIndex + 1; i < newLength && i < rf.log[len(rf.log)-1].Idx+1; i++ {
-				if (rf.log[i-sIdx].Command != args.Entries[j].Command) || (rf.log[i-sIdx].Term != args.Entries[j].Term) {
+				if rf.log[i-sIdx].Term != args.Entries[j].Term {
 					rf.log = rf.log[:i-sIdx]
 					rf.log = append(rf.log, args.Entries[j:]...)
 					// fmt.Println("count ", args.DebugCount, "sucess append entries", rf.me, "cid = ", args.LeaderId, "deleted logs", "enteis", args.Entries, "previndex", args.PrevLogIndex,

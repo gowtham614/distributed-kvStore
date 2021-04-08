@@ -19,10 +19,9 @@ type ShardMaster struct {
 
 	// Your data here.
 
-	configs              []Config // indexed by config num
-	resultCh             map[int]chan Result
-	lastAck              map[int64]int64
-	lastRaftCommandIndex int // used for snapshot
+	configs  []Config // indexed by config num
+	resultCh map[int]chan Result
+	lastAck  map[int64]int64
 }
 
 type Op struct {
