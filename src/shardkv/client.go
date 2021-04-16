@@ -8,11 +8,15 @@ package shardkv
 // talks to the group that holds the key's shard.
 //
 
-import "../labrpc"
-import "crypto/rand"
-import "math/big"
-import "../shardmaster"
-import "time"
+import (
+	"crypto/rand"
+	"math/big"
+	"sync"
+	"time"
+
+	"../labrpc"
+	"../shardmaster"
+)
 
 //
 // which shard is a key in?
@@ -40,6 +44,9 @@ type Clerk struct {
 	config   shardmaster.Config
 	make_end func(string) *labrpc.ClientEnd
 	// You will have to modify this struct.
+	mu   sync.Mutex
+	me   int64
+	opID int64
 }
 
 //
@@ -56,6 +63,8 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardmaster.MakeClerk(masters)
 	ck.make_end = make_end
 	// You'll have to add code here.
+	ck.opID = 1
+	ck.me = nrand()
 	return ck
 }
 
@@ -68,6 +77,11 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
+	ck.mu.Lock()
+	args.OpID = ck.opID
+	ck.opID++
+	ck.mu.Unlock()
+	args.ClientID = ck.me
 
 	for {
 		shard := key2shard(key)
@@ -105,6 +119,11 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Value = value
 	args.Op = op
 
+	ck.mu.Lock()
+	args.OpID = ck.opID
+	ck.opID++
+	ck.mu.Unlock()
+	args.ClientID = ck.me
 
 	for {
 		shard := key2shard(key)
