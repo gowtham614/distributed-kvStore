@@ -18,6 +18,10 @@ type Op struct {
 	Val      string
 	ClientID int64
 	OpID     int64
+
+	DB      [shardmaster.NShards]map[string]string
+	LastAck map[int64]int64
+	Config  shardmaster.Config
 }
 
 type Result struct {
@@ -50,7 +54,7 @@ type ShardKV struct {
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	// fmt.Println("kv ", kv.me, "Get ", args.ClientID, args.OpID, "key =", args.Key)
+	// fmt.Println("kv ", kv.me, kv.gid, "Get ", args.ClientID, args.OpID, "key =", args.Key)
 	kv.mu.Lock()
 	validKey := kv.validKey(args.Key)
 	kv.mu.Unlock()
@@ -68,15 +72,15 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	reply.Err = res.Err
 	reply.Value = res.Val
 	if len(reply.Value) > 10 {
-		// fmt.Println("kv", kv.me, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value[len(reply.Value)-10:])
+		// fmt.Println("kv", kv.me, kv.gid, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value[len(reply.Value)-10:], kv.db)
 	} else {
-		// fmt.Println("kv", kv.me, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value)
+		// fmt.Println("kv", kv.me, kv.gid, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value, kv.db)
 	}
 }
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-	// fmt.Println("kv", kv.me, " put append, ", args.ClientID, args.OpID, "key =", args.Key, args.Value)
+	// fmt.Println("kv", kv.me, kv.gid, " put append, ", args.ClientID, args.OpID, "key =", args.Key, args.Value)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = args.Op
@@ -100,6 +104,7 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	var res Result
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
+	// fmt.Println("kv", kv.me, kv.gid, " put append, finish", args.ClientID, args.OpID, "key =", args.Key, args.Value, kv.db)
 }
 
 // look should be held before calling
@@ -177,30 +182,48 @@ func (kv *ShardKV) receiveRaftMsg() {
 
 		// updating internal key value store database
 		if op.Cmd == "Put" {
-			if kv.lastAck[op.ClientID] < op.OpID {
+			if !kv.validKey(op.Key) {
+				res.Err = ErrWrongGroup
+			} else if kv.lastAck[op.ClientID] < op.OpID {
 				kv.db[key2shard(op.Key)][op.Key] = op.Val
+				kv.lastAck[op.ClientID] = op.OpID
 			} else {
 				// fmt.Println("kv ", kv.me, "duplicate receiveRaftMsg put, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Append" {
-			if kv.lastAck[op.ClientID] < op.OpID {
+			if !kv.validKey(op.Key) {
+				res.Err = ErrWrongGroup
+			} else if kv.lastAck[op.ClientID] < op.OpID {
 				kv.db[key2shard(op.Key)][op.Key] += op.Val
+				kv.lastAck[op.ClientID] = op.OpID
 			} else {
 				// fmt.Println("kv ", kv.me, "duplicate receiveRaftMsg append, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Get" {
 			_, ok := kv.db[key2shard(op.Key)][op.Key]
+			kv.lastAck[op.ClientID] = op.OpID
 			if !ok {
 				// fmt.Println("kv ", kv.me, "receiveRaftMsg no key", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, kv.lastAck)
 				res.Err = ErrNoKey
 			}
+		} else if op.Cmd == "Reconfigure" {
+			// fmt.Println("kv ", kv.me, kv.gid, "reconfigure moved db ", op.DB, "config", op.Config)
+			for k, v := range op.LastAck {
+				kv.lastAck[k] = v
+			}
+			for i := 0; i < shardmaster.NShards; i++ {
+				for k, v := range op.DB[i] {
+					kv.db[i][k] = v
+				}
+			}
+			kv.config = op.Config
+			kv.lastAck[op.ClientID] = op.OpID
 		}
 
 		res.Cmd = op.Cmd
 		res.Key = op.Key
 		res.Val = kv.db[key2shard(op.Key)][op.Key]
 		kv.lastRaftCommandIndex = msg.CommandIndex
-		kv.lastAck[op.ClientID] = op.OpID
 		if _, ok := kv.resultCh[msg.CommandIndex]; ok {
 			// fmt.Println("kv", kv.me, " Server receiveRaftMsg, posting on channel waiting")
 			kv.resultCh[msg.CommandIndex] <- res
@@ -225,21 +248,139 @@ func (kv *ShardKV) takeSnapshot() {
 				// fmt.Println("kv", kv.me, "snap shot failed")
 			}
 		}
-		time.Sleep(time.Millisecond)
+		// time.Sleep(time.Millisecond)
 		kv.mu.Unlock()
 		// todo fix this
-		// time.Sleep(time.Millisecond)
+		time.Sleep(time.Millisecond)
 	}
 }
 
 // thread for getConfig
-func (kv *ShardKV) getConfig() {
+func (kv *ShardKV) reconfigure() {
 	for !kv.killed() {
+		// check leader
+		if _, isLeader := kv.rf.GetState(); !isLeader {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
 		kv.mu.Lock()
-		kv.config = kv.sm.Query(-1)
+		// fmt.Println("kv", kv.me, kv.gid, "reconfigure")
+		nextConfig := kv.sm.Query(kv.config.Num + 1)
+		currConfig := kv.sm.Query(kv.config.Num)
+		gid := kv.gid
 		kv.mu.Unlock()
+		var wg sync.WaitGroup
+		var l sync.Mutex
+		var entry Op
+		entry.Cmd = "Reconfigure"
+		entry.Config = nextConfig
+		for i := 0; i < shardmaster.NShards; i++ {
+			entry.DB[i] = make(map[string]string)
+		}
+		entry.LastAck = make(map[int64]int64)
+
+		ok := true
+
+		if nextConfig.Num == currConfig.Num+1 {
+			for i := 0; i < shardmaster.NShards; i++ {
+				if nextConfig.Shards[i] != currConfig.Shards[i] && nextConfig.Shards[i] == gid && currConfig.Shards[i] != 0 {
+					wg.Add(1)
+					go func(i int) {
+						var args GetShardsArgs
+						var reply GetShardsReply
+						args.ConfigNum = nextConfig.Num
+						args.Gid = gid
+						args.Shard = i
+						if kv.sendGetShards(i, currConfig, &args, &reply) {
+							// add it to entry for storing in raft
+							l.Lock()
+							entry.DB[i] = reply.DB[i] // may be wrong
+							for k, v := range reply.LastAck {
+								entry.LastAck[k] = v
+							}
+							l.Unlock()
+						} else {
+							l.Lock()
+							ok = false
+							l.Unlock()
+						}
+
+						wg.Done()
+					}(i)
+				} else {
+					// fmt.Println("reconfigure next config else")
+				}
+			}
+		}
+		// fmt.Println("waiting reconfigure nextconfig num ", nextConfig.Num, "currconfig num", currConfig.Num)
+		wg.Wait()
+		if ok {
+			// fmt.Println("reconfigure sendraftmsg")
+			var res Result
+			kv.sendRaftMsg(entry, &res)
+			// check res err??
+		} else {
+			// fmt.Println("kv", kv.me, kv.gid, "reconfig failed new COnfig", nextConfig, "currCOnfig", currConfig)
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func (kv *ShardKV) sendGetShards(shard int, currConfig shardmaster.Config, args *GetShardsArgs, reply *GetShardsReply) bool {
+	txGid := currConfig.Shards[shard]
+	servers := currConfig.Groups[txGid]
+	// try each server for the shard.
+	for si := 0; si < len(servers); si++ {
+		srv := kv.make_end(servers[si])
+		ok := srv.Call("ShardKV.GetShards", args, reply)
+		if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+			// fmt.Println("sendGetShards true")
+			return true // think for no key
+		}
+		if ok && (reply.Err == ErrWrongGroup) {
+			break
+		}
+		// ... not ok, or ErrWrongLeader
+	}
+	// wrong group all wrong leader
+	// fmt.Println("kv", kv.me, kv.gid, "sendGetShards false")
+	return false
+}
+
+func (kv *ShardKV) GetShards(args *GetShardsArgs, reply *GetShardsReply) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if _, isLeader := kv.rf.GetState(); !isLeader {
+		// fmt.Println("kv", kv.me, kv.gid, "GetShards ErrWrongLeader real")
+		reply.Err = ErrWrongLeader
+		return
+	}
+	if args.ConfigNum > (kv.config.Num + 1) {
+		// fmt.Println("kv", kv.me, kv.gid, "GetShards ErrWrongLeader", "args.configNum", args.ConfigNum, "myNum", kv.config.Num)
+		reply.Err = ErrWrongLeader
+		return
+	}
+	// should we transfer multiple shards to same gid??
+	// check if the args are correct??
+	for i := 0; i < shardmaster.NShards; i++ {
+		reply.DB[i] = make(map[string]string)
+	}
+
+	// copy the shards in args
+	for k, v := range kv.db[args.Shard] {
+		reply.DB[args.Shard][k] = v
+	}
+
+	reply.LastAck = make(map[int64]int64)
+	for k, v := range kv.lastAck {
+		reply.LastAck[k] = v
+	}
+	// remove the shard from servicing
+	kv.config.Shards[args.Shard] = args.Gid
+
+	reply.Err = OK
+	// fmt.Println("kv", kv.me, kv.gid, "GetShards db ", reply.DB, "config", kv.config)
 }
 
 //
@@ -315,6 +456,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	go kv.receiveRaftMsg()
 	go kv.takeSnapshot()
-	go kv.getConfig()
+	go kv.reconfigure()
 	return kv
 }

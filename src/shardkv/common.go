@@ -1,5 +1,7 @@
 package shardkv
 
+import "../shardmaster"
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running op-at-a-time paxos.
@@ -45,4 +47,16 @@ type GetArgs struct {
 type GetReply struct {
 	Err   Err
 	Value string
+}
+
+type GetShardsArgs struct {
+	Shard     int
+	ConfigNum int
+	Gid       int
+}
+
+type GetShardsReply struct {
+	Err     Err
+	DB      [shardmaster.NShards]map[string]string
+	LastAck map[int64]int64
 }
