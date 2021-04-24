@@ -58,5 +58,5 @@ type GetShardsArgs struct {
 type GetShardsReply struct {
 	Err     Err
 	DB      [shardmaster.NShards]map[string]string
-	LastAck map[int64]int64
+	LastAck [shardmaster.NShards]map[int64]int64
 }

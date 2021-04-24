@@ -2,6 +2,7 @@ package shardkv
 
 import (
 	"bytes"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +21,7 @@ type Op struct {
 	OpID     int64
 
 	DB      [shardmaster.NShards]map[string]string
-	LastAck map[int64]int64
+	LastAck [shardmaster.NShards]map[int64]int64
 	Config  shardmaster.Config
 }
 
@@ -45,7 +46,7 @@ type ShardKV struct {
 	maxraftstate         int // snapshot if log grows this big
 	db                   [shardmaster.NShards]map[string]string
 	resultCh             map[int]chan Result
-	lastAck              map[int64]int64
+	lastAck              [shardmaster.NShards]map[int64]int64
 	lastRaftCommandIndex int
 	config               shardmaster.Config
 	sm                   *shardmaster.Clerk
@@ -54,7 +55,7 @@ type ShardKV struct {
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	// fmt.Println("kv ", kv.me, kv.gid, "Get ", args.ClientID, args.OpID, "key =", args.Key)
+	fmt.Println("kv", kv.me, kv.gid, "Get ", args.ClientID, args.OpID, "key =", args.Key)
 	kv.mu.Lock()
 	validKey := kv.validKey(args.Key)
 	kv.mu.Unlock()
@@ -71,16 +72,18 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
 	reply.Value = res.Val
+	kv.mu.Lock()
 	if len(reply.Value) > 10 {
-		// fmt.Println("kv", kv.me, kv.gid, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value[len(reply.Value)-10:], kv.db)
+		fmt.Println("kv", kv.me, kv.gid, "reply get, ", res.Err, args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value[len(reply.Value)-10:], kv.lastAck)
 	} else {
-		// fmt.Println("kv", kv.me, kv.gid, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value, kv.db)
+		fmt.Println("kv", kv.me, kv.gid, "reply get, ", res.Err, args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value, kv.lastAck)
 	}
+	kv.mu.Unlock()
 }
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-	// fmt.Println("kv", kv.me, kv.gid, " put append, ", args.ClientID, args.OpID, "key =", args.Key, args.Value)
+	fmt.Println("kv", kv.me, kv.gid, " put append, ", args.ClientID, args.OpID, "key =", args.Key, args.Value)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = args.Op
@@ -89,22 +92,24 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	op.OpID = args.OpID
 
 	kv.mu.Lock()
-	id := kv.lastAck[op.ClientID]
+	id := kv.lastAck[key2shard(args.Key)][op.ClientID]
 	validKey := kv.validKey(args.Key)
 	kv.mu.Unlock()
+	if !validKey {
+		reply.Err = ErrWrongGroup
+		return
+	}
 	if id >= op.OpID {
 		// fmt.Println("duplicate put append, ", kv.me, args.ClientID, args.OpID, "key =", args.Key, args.Value, kv.lastAck)
 		reply.Err = OK
 		return
 	}
-	if !validKey {
-		reply.Err = ErrWrongGroup
-		return
-	}
 	var res Result
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
-	// fmt.Println("kv", kv.me, kv.gid, " put append, finish", args.ClientID, args.OpID, "key =", args.Key, args.Value, kv.db)
+	kv.mu.Lock()
+	fmt.Println("kv", kv.me, kv.gid, " put append, finish", res.Err, args.ClientID, args.OpID, "key =", args.Key, args.Value, kv.lastAck)
+	kv.mu.Unlock()
 }
 
 // look should be held before calling
@@ -167,6 +172,7 @@ func (kv *ShardKV) receiveRaftMsg() {
 			d := labgob.NewDecoder(r)
 			d.Decode(&kv.db)
 			d.Decode(&kv.lastAck)
+			d.Decode(&kv.config)
 			// fmt.Println("kv", kv.me, " after recover", "db =", kv.db)
 			kv.lastRaftCommandIndex = msg.CommandIndex
 			kv.mu.Unlock()
@@ -184,40 +190,43 @@ func (kv *ShardKV) receiveRaftMsg() {
 		if op.Cmd == "Put" {
 			if !kv.validKey(op.Key) {
 				res.Err = ErrWrongGroup
-			} else if kv.lastAck[op.ClientID] < op.OpID {
+			} else if kv.lastAck[key2shard(op.Key)][op.ClientID] < op.OpID {
 				kv.db[key2shard(op.Key)][op.Key] = op.Val
-				kv.lastAck[op.ClientID] = op.OpID
+				kv.lastAck[key2shard(op.Key)][op.ClientID] = op.OpID
 			} else {
-				// fmt.Println("kv ", kv.me, "duplicate receiveRaftMsg put, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
+				res.Err = ErrWrongLeader
+				// fmt.Println("kv", kv.me, "duplicate receiveRaftMsg put, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Append" {
 			if !kv.validKey(op.Key) {
 				res.Err = ErrWrongGroup
-			} else if kv.lastAck[op.ClientID] < op.OpID {
+			} else if kv.lastAck[key2shard(op.Key)][op.ClientID] < op.OpID {
 				kv.db[key2shard(op.Key)][op.Key] += op.Val
-				kv.lastAck[op.ClientID] = op.OpID
+				kv.lastAck[key2shard(op.Key)][op.ClientID] = op.OpID
 			} else {
-				// fmt.Println("kv ", kv.me, "duplicate receiveRaftMsg append, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
+				res.Err = ErrWrongLeader
+				// fmt.Println("kv", kv.me, "duplicate receiveRaftMsg append, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Get" {
 			_, ok := kv.db[key2shard(op.Key)][op.Key]
-			kv.lastAck[op.ClientID] = op.OpID
+			kv.lastAck[key2shard(op.Key)][op.ClientID] = op.OpID
 			if !ok {
-				// fmt.Println("kv ", kv.me, "receiveRaftMsg no key", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, kv.lastAck)
+				// fmt.Println("kv", kv.me, "receiveRaftMsg no key", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, kv.lastAck)
 				res.Err = ErrNoKey
 			}
 		} else if op.Cmd == "Reconfigure" {
-			// fmt.Println("kv ", kv.me, kv.gid, "reconfigure moved db ", op.DB, "config", op.Config)
-			for k, v := range op.LastAck {
-				kv.lastAck[k] = v
-			}
+			fmt.Println("kv", kv.me, kv.gid, "reconfigure moved, config", op.Config, kv.lastAck)
+
 			for i := 0; i < shardmaster.NShards; i++ {
 				for k, v := range op.DB[i] {
 					kv.db[i][k] = v
 				}
+				for k, v := range op.LastAck[i] {
+					kv.lastAck[i][k] = v
+				}
 			}
 			kv.config = op.Config
-			kv.lastAck[op.ClientID] = op.OpID
+			// kv.lastAck[op.ClientID] = op.OpID
 		}
 
 		res.Cmd = op.Cmd
@@ -243,6 +252,7 @@ func (kv *ShardKV) takeSnapshot() {
 			e := labgob.NewEncoder(w)
 			e.Encode(kv.db)
 			e.Encode(kv.lastAck)
+			e.Encode(kv.config)
 			currentCommandIndex = kv.lastRaftCommandIndex
 			if !kv.rf.StoreSnapshot(w.Bytes(), kv.lastRaftCommandIndex) { // we need to store the command Index
 				// fmt.Println("kv", kv.me, "snap shot failed")
@@ -277,8 +287,8 @@ func (kv *ShardKV) reconfigure() {
 		entry.Config = nextConfig
 		for i := 0; i < shardmaster.NShards; i++ {
 			entry.DB[i] = make(map[string]string)
+			entry.LastAck[i] = make(map[int64]int64)
 		}
-		entry.LastAck = make(map[int64]int64)
 
 		ok := true
 
@@ -296,9 +306,10 @@ func (kv *ShardKV) reconfigure() {
 							// add it to entry for storing in raft
 							l.Lock()
 							entry.DB[i] = reply.DB[i] // may be wrong
-							for k, v := range reply.LastAck {
-								entry.LastAck[k] = v
-							}
+							entry.LastAck[i] = reply.LastAck[i]
+							// for k, v := range reply.LastAck {
+							// 	entry.LastAck[k] = v
+							// }
 							l.Unlock()
 						} else {
 							l.Lock()
@@ -365,6 +376,7 @@ func (kv *ShardKV) GetShards(args *GetShardsArgs, reply *GetShardsReply) {
 	// check if the args are correct??
 	for i := 0; i < shardmaster.NShards; i++ {
 		reply.DB[i] = make(map[string]string)
+		reply.LastAck[i] = make(map[int64]int64)
 	}
 
 	// copy the shards in args
@@ -372,9 +384,9 @@ func (kv *ShardKV) GetShards(args *GetShardsArgs, reply *GetShardsReply) {
 		reply.DB[args.Shard][k] = v
 	}
 
-	reply.LastAck = make(map[int64]int64)
-	for k, v := range kv.lastAck {
-		reply.LastAck[k] = v
+	// reply.LastAck = make(map[int64]int64)
+	for k, v := range kv.lastAck[args.Shard] {
+		reply.LastAck[args.Shard][k] = v
 	}
 	// remove the shard from servicing
 	kv.config.Shards[args.Shard] = args.Gid
@@ -450,9 +462,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	for i := 0; i < shardmaster.NShards; i++ {
 		kv.db[i] = make(map[string]string)
+		kv.lastAck[i] = make(map[int64]int64)
 	}
 	kv.resultCh = make(map[int]chan Result)
-	kv.lastAck = make(map[int64]int64)
 
 	go kv.receiveRaftMsg()
 	go kv.takeSnapshot()
