@@ -50,8 +50,6 @@ type Result struct {
 }
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
-	// fmt.Println("sm ", sm.me, "Join ", args.ClientID, args.OpID, "Servers =", args.Servers)
-	// Your code here.
 	var op Op
 	op.Cmd = "Join"
 	op.ClientID = args.ClientID
@@ -66,8 +64,6 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 }
 
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
-	// fmt.Println("sm ", sm.me, "Leave ", args.ClientID, args.OpID, "GIDs =", args.GIDs)
-	// Your code here.
 	var op Op
 	op.Cmd = "Leave"
 	op.ClientID = args.ClientID
@@ -82,8 +78,6 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 }
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
-	// fmt.Println("sm ", sm.me, "Move ", args.ClientID, args.OpID, "Shard =", args.Shard, "GID=", args.GID)
-	// Your code here.
 	var op Op
 	op.Cmd = "Move"
 	op.ClientID = args.ClientID
@@ -113,7 +107,6 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
 	reply.WrongLeader = res.WrongLeader
 	reply.Err = res.Err
 	reply.Config = res.Config
-	// fmt.Println("sm ", sm.me, "Query reply", args.ClientID, args.OpID, "Num =", args.Num, "config =", res.Config)
 }
 
 func (sm *ShardMaster) sendRaftMsg(op Op, res *Result) {
@@ -163,7 +156,6 @@ func (sm *ShardMaster) receiveRaftMsg() {
 		id := sm.lastAck[op.ClientID]
 		duplicate := false
 		if id >= op.OpID {
-			// fmt.Println("sm ", sm.me, "receiveRaftMsg() duplicate received")
 			duplicate = true
 		}
 
@@ -208,13 +200,12 @@ func (sm *ShardMaster) applyJoin(op Op) {
 	for gid, servers := range op.Servers {
 		c.Groups[gid] = servers
 	}
-	// fmt.Println("sm ", sm.me, "applyJoin before balance config =", c)
+
 	sm.rebalance(&c)
 	sm.configs = append(sm.configs, c)
 }
 
 func (sm *ShardMaster) applyLeave(op Op) {
-	// fmt.Println("\nsm ", sm.me, "applyLeave", op.ClientID, op.OpID, "GIDs =", op.GIDs)
 	c := sm.makeNewConfig()
 	for _, delGid := range op.GIDs {
 		for shard, gid := range c.Shards {
@@ -224,7 +215,7 @@ func (sm *ShardMaster) applyLeave(op Op) {
 		}
 		delete(c.Groups, delGid)
 	}
-	// fmt.Println("\nsm ", sm.me, "applyLeave", op.ClientID, op.OpID, "before balance config =", c)
+
 	sm.rebalance(&c)
 	sm.configs = append(sm.configs, c)
 }
@@ -259,8 +250,6 @@ func (sm *ShardMaster) rebalance(c *Config) {
 		GID2Shard[gid] = append(GID2Shard[gid], shard)
 	}
 
-	// fmt.Println("sm ", sm.me, "rebalance GID2Shard =", GID2Shard, "meanShards =", meanShards)
-
 	for gid := range c.Groups {
 		for len(GID2Shard[gid]) < meanShards {
 			for srcGid := range c.Groups {
@@ -274,7 +263,6 @@ func (sm *ShardMaster) rebalance(c *Config) {
 			}
 		}
 	}
-	// fmt.Println("\n\nsm ", sm.me, "rebalance latest config =", c)
 }
 
 // calling function holds lock

@@ -57,16 +57,13 @@ func (m *Master) GetTask(reply *ExampleReply, args *TaskArgs) error {
 
 			m.taskList[i].state = 1
 			m.taskList[i].startTime = time.Now()
-			// fmt.Printf("%v master GetTask = %+v\n", time.Now(), args)
 			return nil
 		}
 	}
-	// fmt.Printf("%v master GetTask = %+v\n", time.Now(), args)
 	return nil
 }
 
 func (m *Master) ReportTask(report *TaskReport, reply *ExampleReply) error {
-	// fmt.Printf("%v master ReportTask = %+v\n", time.Now(), report)
 	idx := report.TaskNumber
 	if report.C == "r" {
 		idx = m.nMap + report.TaskNumber
@@ -103,7 +100,7 @@ func (m *Master) Done() bool {
 	defer m.lock.Unlock()
 	timeNow := time.Now()
 	done := true
-	// fmt.Println("master task check = ", m.taskList)
+
 	for i := 0; i < len(m.taskList); i++ {
 		if m.taskList[i].state != 2 {
 			done = false

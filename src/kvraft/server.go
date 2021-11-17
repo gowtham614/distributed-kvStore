@@ -50,12 +50,9 @@ type KVServer struct {
 	resultCh             map[int]chan Result
 	lastAck              map[int64]int64
 	lastRaftCommandIndex int
-
-	// Your definitions here.
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// fmt.Println("kv ", kv.me, "Get ", args.ClientID, args.OpID, "key =", args.Key)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = "Get"
@@ -65,29 +62,18 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
 	reply.Value = res.Val
-	if len(reply.Value) > 10 {
-		// fmt.Println("kv", kv.me, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value[len(reply.Value)-10:])
-	} else {
-		// fmt.Println("kv", kv.me, "reply get, ", args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value)
-	}
 }
 
 func (kv *KVServer) sendRaftMsg(op Op, res *Result) {
-	// fmt.Println("kv", kv.me, "sendRaftMsg sending start() ", op)
 	idx, _, isLeader := kv.rf.Start(op)
-	// fmt.Println("kv", kv.me, " sendRaftMsg start() finished", op)
 	if !isLeader {
-		// fmt.Println("kv", kv.me, " sendRaftMsg Get wrong leader")
 		res.Err = ErrWrongLeader
 		return
 	}
-	// fmt.Println("Server Get", kv.me, "making channel idx", idx)
+
 	kv.mu.Lock()
 	if _, ok := kv.resultCh[idx]; !ok {
-		// fmt.Println("Server Get", kv.me, "now making channel idx", idx)
 		kv.resultCh[idx] = make(chan Result, 1)
-	} else {
-		// fmt.Println("kv", kv.me, "sendRaftMsg channel already exist", idx)
 	}
 	p := kv.resultCh[idx]
 	kv.mu.Unlock()
@@ -95,33 +81,21 @@ func (kv *KVServer) sendRaftMsg(op Op, res *Result) {
 	select {
 	case result := <-p:
 		if op.Cmd != result.Cmd || op.Key != result.Key || op.ClientID != result.ClientID || op.OpID != result.OpID {
-			// fmt.Println("kv", kv.me, "sendRaftMsg no key", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, "res", result.Cmd, result.Key)
 			res.Err = ErrWrongLeader
 			return
 		}
 
-		// if op.Cmd == "Put" || op.Cmd == "Append" {
-		// 	if op.Val != result.Val {
-		// 		fmt.Println("kv sendRaftMsg put/A val wrong", kv.me, op.ClientID, op.OpID, op.Cmd, "key =", op.Key, "op.val", op.Val,
-		// 			"res.val", result.Val)
-		// 		res.Err = ErrWrongLeader
-		// 		return
-		// 	}
-		// }
 		res.Cmd = result.Cmd
 		res.Key = result.Key
 		res.Val = result.Val
 		res.Err = result.Err
 
-		// fmt.Println("kv", kv.me, "sendRaftMsg sucess", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, res.Val)
 	case <-time.After(2000 * time.Millisecond):
-		// fmt.Println("kv", kv.me, "sendRaftMsg timeout wrongleader", op.ClientID, op.OpID, op.Cmd, "key =", op.Key)
 		res.Err = ErrWrongLeader
 	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// fmt.Println("kv", kv.me, " put append, ", args.ClientID, args.OpID, "key =", args.Key, args.Value)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = args.Op
@@ -133,7 +107,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	id := kv.lastAck[op.ClientID]
 	kv.mu.Unlock()
 	if id >= op.OpID {
-		// fmt.Println("duplicate put append, ", kv.me, args.ClientID, args.OpID, "key =", args.Key, args.Value, kv.lastAck)
 		reply.Err = OK
 		return
 	}
@@ -145,26 +118,20 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // thread for receiving all raft msg
 func (kv *KVServer) receiveRaftMsg() {
 	for !kv.killed() {
-		// fmt.Println("kv", kv.me, "Server receiveRaftMsg waiting")
 		msg := <-kv.applyCh
-		// fmt.Println("kv", kv.me, "Server receiveRaftMsg received")
 		kv.mu.Lock()
 
 		if !msg.CommandValid {
 			// recover from snapshot
-			// fmt.Println("kv", kv.me, " recover from snapshot")
 			r := bytes.NewBuffer(msg.Command.([]byte))
 			d := labgob.NewDecoder(r)
 			d.Decode(&kv.db)
 			d.Decode(&kv.lastAck)
-			// fmt.Println("kv", kv.me, " after recover", "db =", kv.db)
 			kv.lastRaftCommandIndex = msg.CommandIndex
 			kv.mu.Unlock()
 			continue
 		}
 		op := msg.Command.(Op)
-		// fmt.Println("kv", kv.me, " Server receiveraft Msg", "ClientID", op.ClientID,
-		// 	"cmd", op.Cmd, "key", op.Key, "opid", op.OpID, "val", op.Val)
 		var res Result
 		res.Err = OK
 		res.ClientID = op.ClientID
@@ -174,19 +141,14 @@ func (kv *KVServer) receiveRaftMsg() {
 		if op.Cmd == "Put" {
 			if kv.lastAck[op.ClientID] < op.OpID {
 				kv.db[op.Key] = op.Val
-			} else {
-				// fmt.Println("kv ", kv.me, "duplicate receiveRaftMsg put, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Append" {
 			if kv.lastAck[op.ClientID] < op.OpID {
 				kv.db[op.Key] += op.Val
-			} else {
-				// fmt.Println("kv ", kv.me, "duplicate receiveRaftMsg append, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Get" {
 			_, ok := kv.db[op.Key]
 			if !ok {
-				// fmt.Println("kv ", kv.me, "receiveRaftMsg no key", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, kv.lastAck)
 				res.Err = ErrNoKey
 			}
 		}
@@ -197,9 +159,7 @@ func (kv *KVServer) receiveRaftMsg() {
 		kv.lastRaftCommandIndex = msg.CommandIndex
 		kv.lastAck[op.ClientID] = op.OpID
 		if _, ok := kv.resultCh[msg.CommandIndex]; ok {
-			// fmt.Println("kv", kv.me, " Server receiveRaftMsg, posting on channel waiting")
 			kv.resultCh[msg.CommandIndex] <- res
-			// fmt.Println("kv", kv.me, " Server receiveRaftMsg, posting on channel finished")
 		}
 		kv.mu.Unlock()
 	}
@@ -210,14 +170,12 @@ func (kv *KVServer) takeSnapshot() {
 	for !kv.killed() {
 		kv.mu.Lock()
 		if kv.maxraftstate > 0 && kv.rf.GetRaftStateSize() > kv.maxraftstate && kv.lastRaftCommandIndex > currentCommandIndex { // threshold??
-			// fmt.Println("kv", kv.me, "snap shot")
 			w := new(bytes.Buffer)
 			e := labgob.NewEncoder(w)
 			e.Encode(kv.db)
 			e.Encode(kv.lastAck)
 			currentCommandIndex = kv.lastRaftCommandIndex
 			if !kv.rf.StoreSnapshot(w.Bytes(), kv.lastRaftCommandIndex) { // we need to store the command Index
-				// fmt.Println("kv", kv.me, "snap shot failed")
 			}
 		}
 		time.Sleep(time.Millisecond)
@@ -263,19 +221,14 @@ func (kv *KVServer) killed() bool {
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	// fmt.Println("kv", me, " restart")
 	labgob.Register(Op{})
 
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
-	// fmt.Println("kv", kv.me, " max raft state", maxraftstate)
-	// You may need initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg, 10)
-	// fmt.Println("kv", kv.me, " server raft construction waiting")
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-	// fmt.Println("kv", kv.me, " server raft construction done")
 	kv.db = make(map[string]string)
 	kv.resultCh = make(map[int]chan Result)
 	kv.lastAck = make(map[int64]int64)

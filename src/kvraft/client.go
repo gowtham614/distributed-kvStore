@@ -61,7 +61,6 @@ func (ck *Clerk) Get(key string) string {
 	for reply.Err != OK {
 
 		ok := ck.servers[ck.leaderId].Call("KVServer.Get", &args, &reply)
-		// fmt.Println("Client Get leader id", ck.leaderId, reply.Err, ok)
 		if reply.Err == OK {
 			return reply.Value
 		}
@@ -86,7 +85,6 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// fmt.Println("Client PutAppend", key, value)
 	var args PutAppendArgs
 	args.Op = op
 	args.Value = value
@@ -109,7 +107,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
 		}
 	}
-	// fmt.Println("Client PutAppend return", key, value)
 }
 
 func (ck *Clerk) Put(key string, value string) {

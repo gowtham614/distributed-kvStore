@@ -53,8 +53,6 @@ type ShardKV struct {
 }
 
 func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-	// fmt.Println("kv", kv.me, kv.gid, "Get ", args.ClientID, args.OpID, "key =", args.Key)
 	kv.mu.Lock()
 	validKey := kv.validKey(args.Key)
 	kv.mu.Unlock()
@@ -71,18 +69,9 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
 	reply.Value = res.Val
-	// kv.mu.Lock()
-	// if len(reply.Value) > 40 {
-	// 	fmt.Println("kv", kv.me, kv.gid, "reply get, ", res.Err, args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value[len(reply.Value)-40:], kv.lastAck)
-	// } else {
-	// 	fmt.Println("kv", kv.me, kv.gid, "reply get, ", res.Err, args.ClientID, args.OpID, "key =", args.Key, ",", reply.Value, kv.lastAck)
-	// }
-	// kv.mu.Unlock()
 }
 
 func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
-	// fmt.Println("kv", kv.me, kv.gid, " put append, ", args.ClientID, args.OpID, "key =", args.Key, args.Value)
 	var op Op
 	op.Key = args.Key
 	op.Cmd = args.Op
@@ -99,23 +88,12 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 	if id >= op.OpID {
-		// fmt.Println("duplicate put append, ", kv.me, args.ClientID, args.OpID, "key =", args.Key, args.Value, kv.lastAck)
 		reply.Err = OK
 		return
 	}
 	var res Result
 	kv.sendRaftMsg(op, &res)
 	reply.Err = res.Err
-	// kv.mu.Lock()
-	// val := kv.db[key2shard(args.Key)][args.Key]
-	// if len(val) > 40 {
-	// 	fmt.Println("kv", kv.me, kv.gid, "put append, finish", res.Err, args.ClientID, args.OpID, "key =", args.Key, ",", args.Value,
-	// 		"all", val[len(val)-40:], kv.lastAck)
-	// } else {
-	// 	fmt.Println("kv", kv.me, kv.gid, "put append, finish", res.Err, args.ClientID, args.OpID, "key =", args.Key, ",", args.Value,
-	// 		"all", val, kv.lastAck)
-	// }
-	// kv.mu.Unlock()
 }
 
 // look should be held before calling
@@ -133,8 +111,6 @@ func (kv *ShardKV) sendRaftMsg(op Op, res *Result) {
 	kv.mu.Lock()
 	if _, ok := kv.resultCh[idx]; !ok {
 		kv.resultCh[idx] = make(chan Result, 1)
-	} else {
-		// fmt.Println("kv", kv.me, "sendRaftMsg channel already exist", idx)
 	}
 	p := kv.resultCh[idx]
 	kv.mu.Unlock()
@@ -142,7 +118,6 @@ func (kv *ShardKV) sendRaftMsg(op Op, res *Result) {
 	select {
 	case result := <-p:
 		if op.Cmd != result.Cmd || op.Key != result.Key || op.ClientID != result.ClientID || op.OpID != result.OpID {
-			// fmt.Println("kv", kv.me, "sendRaftMsg no key", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, "res", result.Cmd, result.Key)
 			res.Err = ErrWrongLeader
 			return
 		}
@@ -152,9 +127,7 @@ func (kv *ShardKV) sendRaftMsg(op Op, res *Result) {
 		res.Val = result.Val
 		res.Err = result.Err
 
-		// fmt.Println("kv", kv.me, "sendRaftMsg sucess", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, res.Val)
 	case <-time.After(2000 * time.Millisecond):
-		// fmt.Println("kv", kv.me, "sendRaftMsg timeout wrongleader", op.ClientID, op.OpID, op.Cmd, "key =", op.Key)
 		res.Err = ErrWrongLeader
 	}
 }
@@ -162,27 +135,21 @@ func (kv *ShardKV) sendRaftMsg(op Op, res *Result) {
 // thread for receiving all raft msg
 func (kv *ShardKV) receiveRaftMsg() {
 	for !kv.killed() {
-		// fmt.Println("kv", kv.me, "Server receiveRaftMsg waiting")
 		msg := <-kv.applyCh
-		// fmt.Println("kv", kv.me, "Server receiveRaftMsg received")
 		kv.mu.Lock()
 
 		if !msg.CommandValid {
 			// recover from snapshot
-			// fmt.Println("kv", kv.me, " recover from snapshot")
 			r := bytes.NewBuffer(msg.Command.([]byte))
 			d := labgob.NewDecoder(r)
 			d.Decode(&kv.db)
 			d.Decode(&kv.lastAck)
 			d.Decode(&kv.config)
-			// fmt.Println("kv", kv.me, " after recover", "db =", kv.db)
 			kv.lastRaftCommandIndex = msg.CommandIndex
 			kv.mu.Unlock()
 			continue
 		}
 		op := msg.Command.(Op)
-		// fmt.Println("kv", kv.me, " Server receiveraft Msg", "ClientID", op.ClientID,
-		// 	"cmd", op.Cmd, "key", op.Key, "opid", op.OpID, "val", op.Val)
 		var res Result
 		res.Err = OK
 		res.ClientID = op.ClientID
@@ -197,7 +164,6 @@ func (kv *ShardKV) receiveRaftMsg() {
 				kv.lastAck[key2shard(op.Key)][op.ClientID] = op.OpID
 			} else {
 				res.Err = ErrWrongLeader
-				// fmt.Println("kv", kv.me, "duplicate receiveRaftMsg put, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Append" {
 			if !kv.validKey(op.Key) {
@@ -207,23 +173,20 @@ func (kv *ShardKV) receiveRaftMsg() {
 				kv.lastAck[key2shard(op.Key)][op.ClientID] = op.OpID
 			} else {
 				res.Err = ErrWrongLeader
-				// fmt.Println("kv", kv.me, "duplicate receiveRaftMsg append, ", op.ClientID, op.OpID, "key =", op.Key, ",", op.Val, kv.lastAck)
 			}
 		} else if op.Cmd == "Get" {
 			_, ok := kv.db[key2shard(op.Key)][op.Key]
 			kv.lastAck[key2shard(op.Key)][op.ClientID] = op.OpID
 			if !ok {
-				// fmt.Println("kv", kv.me, "receiveRaftMsg no key", op.ClientID, op.OpID, op.Cmd, "key =", op.Key, kv.lastAck)
 				res.Err = ErrNoKey
 			}
 		} else if op.Cmd == "Reconfigure" {
 
 			if op.Config.Num != kv.config.Num+1 {
-				// fmt.Println("kv", kv.me, kv.gid, "reconfigure config less, myconfig", kv.config, "curr config", op.Config)
 				kv.mu.Unlock()
 				continue
 			}
-			// fmt.Println("kv", kv.me, kv.gid, "reconfigure moved, config", op.Config, kv.lastAck)
+
 			for i := 0; i < shardmaster.NShards; i++ {
 				for k, v := range op.DB[i] {
 					kv.db[i][k] = v
@@ -233,7 +196,6 @@ func (kv *ShardKV) receiveRaftMsg() {
 				}
 			}
 			kv.config = op.Config
-			// kv.lastAck[op.ClientID] = op.OpID
 		}
 
 		res.Cmd = op.Cmd
@@ -241,9 +203,7 @@ func (kv *ShardKV) receiveRaftMsg() {
 		res.Val = kv.db[key2shard(op.Key)][op.Key]
 		kv.lastRaftCommandIndex = msg.CommandIndex
 		if _, ok := kv.resultCh[msg.CommandIndex]; ok {
-			// fmt.Println("kv", kv.me, " Server receiveRaftMsg, posting on channel waiting")
 			kv.resultCh[msg.CommandIndex] <- res
-			// fmt.Println("kv", kv.me, " Server receiveRaftMsg, posting on channel finished")
 		}
 		kv.mu.Unlock()
 	}
@@ -254,7 +214,6 @@ func (kv *ShardKV) takeSnapshot() {
 	for !kv.killed() {
 		kv.mu.Lock()
 		if kv.maxraftstate > 0 && kv.rf.GetRaftStateSize() > kv.maxraftstate && kv.lastRaftCommandIndex > currentCommandIndex { // threshold??
-			// fmt.Println("kv", kv.me, "snap shot")
 			w := new(bytes.Buffer)
 			e := labgob.NewEncoder(w)
 			e.Encode(kv.db)
@@ -262,12 +221,10 @@ func (kv *ShardKV) takeSnapshot() {
 			e.Encode(kv.config)
 			currentCommandIndex = kv.lastRaftCommandIndex
 			if !kv.rf.StoreSnapshot(w.Bytes(), kv.lastRaftCommandIndex) { // we need to store the command Index
-				// fmt.Println("kv", kv.me, "snap shot failed")
 			}
 		}
-		// time.Sleep(time.Millisecond)
+
 		kv.mu.Unlock()
-		// todo fix this
 		time.Sleep(time.Millisecond)
 	}
 }
@@ -281,7 +238,7 @@ func (kv *ShardKV) reconfigure() {
 			continue
 		}
 		kv.mu.Lock()
-		// fmt.Println("kv", kv.me, kv.gid, "reconfigure")
+
 		nextConfig := kv.sm.Query(kv.config.Num + 1)
 		currConfig := kv.sm.Query(kv.config.Num)
 		gid := kv.gid
@@ -311,11 +268,8 @@ func (kv *ShardKV) reconfigure() {
 						if kv.sendGetShards(i, currConfig, &args, &reply) {
 							// add it to entry for storing in raft
 							l.Lock()
-							entry.DB[i] = reply.DB[i] // may be wrong
+							entry.DB[i] = reply.DB[i]
 							entry.LastAck[i] = reply.LastAck[i]
-							// for k, v := range reply.LastAck {
-							// 	entry.LastAck[k] = v
-							// }
 							l.Unlock()
 						} else {
 							l.Lock()
@@ -325,21 +279,16 @@ func (kv *ShardKV) reconfigure() {
 
 						wg.Done()
 					}(i)
-				} else {
-					// fmt.Println("reconfigure next config else")
 				}
 			}
 		} else {
 			ok = false
 		}
-		// fmt.Println("waiting reconfigure nextconfig num ", nextConfig.Num, "currconfig num", currConfig.Num)
+
 		wg.Wait()
 		if ok {
-			// fmt.Println("reconfigure sendraftmsg")
 			var res Result
 			kv.sendRaftMsg(entry, &res)
-		} else {
-			// fmt.Println("kv", kv.me, kv.gid, "reconfig failed new COnfig", nextConfig, "currCOnfig", currConfig)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -362,7 +311,6 @@ func (kv *ShardKV) sendGetShards(shard int, currConfig shardmaster.Config, args 
 		// ... not ok, or ErrWrongLeader
 	}
 	// wrong group all wrong leader
-	// fmt.Println("kv", kv.me, kv.gid, "sendGetShards false")
 	return false
 }
 
@@ -370,12 +318,10 @@ func (kv *ShardKV) GetShards(args *GetShardsArgs, reply *GetShardsReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	if _, isLeader := kv.rf.GetState(); !isLeader {
-		// fmt.Println("kv", kv.me, kv.gid, "GetShards ErrWrongLeader real")
 		reply.Err = ErrWrongLeader
 		return
 	}
 	if args.ConfigNum > (kv.config.Num + 1) {
-		// fmt.Println("kv", kv.me, kv.gid, "GetShards ErrWrongLeader", "args.configNum", args.ConfigNum, "myNum", kv.config.Num)
 		reply.Err = ErrWrongLeader
 		return
 	}
@@ -391,7 +337,6 @@ func (kv *ShardKV) GetShards(args *GetShardsArgs, reply *GetShardsReply) {
 		reply.DB[args.Shard][k] = v
 	}
 
-	// reply.LastAck = make(map[int64]int64)
 	for k, v := range kv.lastAck[args.Shard] {
 		reply.LastAck[args.Shard][k] = v
 	}
@@ -399,7 +344,6 @@ func (kv *ShardKV) GetShards(args *GetShardsArgs, reply *GetShardsReply) {
 	kv.config.Shards[args.Shard] = args.Gid
 
 	reply.Err = OK
-	// fmt.Println("kv", kv.me, kv.gid, "GetShards db ", reply.DB, "config", kv.config)
 }
 
 //
@@ -471,7 +415,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		kv.lastAck[i] = make(map[int64]int64)
 	}
 	kv.resultCh = make(map[int]chan Result)
-	// fmt.Println("kv", kv.me, kv.gid, "restart config", kv.config)
+
 	go kv.receiveRaftMsg()
 	go kv.takeSnapshot()
 	go kv.reconfigure()
